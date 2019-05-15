@@ -2,28 +2,30 @@
 using Neo.SmartContract.Framework.Services.Neo;
 using Neo.SmartContract.Framework.Services.System;
 using Helper = Neo.SmartContract.Framework.Helper;
-using System;
-using System.Numerics;
 using System.ComponentModel;
+using System.Numerics;
+using System;
 
-namespace LockSolution
+namespace LOCK
 {
     public class Lock : SmartContract
     {
         /** Operation of Lock records
-          * addr,lockType,type,operated*/
+        * addr,lockType,type,operated*/
         [DisplayName("lockOperator")]
-        public static event Action<byte[], byte[],BigInteger, BigInteger> Operated;
+        public static event deleLockOperated Locked;
+        public delegate void deleLockOperated(byte[] from, byte[] type, BigInteger optype, BigInteger value);
+
+        /** Operation of Lock records
+        * addr,lockType,lockAddr*/
+        [DisplayName("lockAddrOperator")]
+        public static event deleLockAddrOperated LockedAddr;
+        public delegate void deleLockAddrOperated(byte[] from, byte[] type, byte[] lockaddr);
 
         public delegate object NEP5Contract(string method, object[] args);
 
         //Default multiple signature committee account
         private static readonly byte[] committee = Helper.ToScriptHash("AZ77FiX7i9mRUPF2RyuJD2L8kS6UDnQ9Y7");
-
-
-        /** 
-         * Static param
-         */
 
         //risk management
         private const string LOCK_TYPE_01 = "lock_01";
@@ -31,19 +33,17 @@ namespace LockSolution
         private const string LOCK_TYPE_03 = "lock_03";
         private const string LOCK_TYPE_04 = "lock_04";
 
-
         //system account
         private const string SDS_ACCOUNT = "sds_account";
         private const string ADMIN_ACCOUNT = "admin_account";
         private const string LOCK_GLOBAL = "lockGlobal";
 
-        /*     
-        * Key wrapper
-        */
-        private static byte[] getLockKey(byte[] addr,string type) => new byte[] { 0x12 }.Concat(type.AsByteArray()).Concat(addr);
-        private static byte[] getAccountKey(byte[] account) => new byte[] { 0x15 }.Concat(account);
-        private static byte[] getTimeKey(string type) => new byte[] { 0x18 }.Concat(type.AsByteArray());
-        private static byte[] getLockGlobalKey(byte[] key) => new byte[] { 0x19 }.Concat(key);
+        //StorageMap lockInfo, key: addr+type
+        //StorageMap account, key: key
+        //StorageMap time, key: key
+        //StorageMap global, key: str
+        //StorageMap addrConfig,key:addr+type
+        //StorageMap lockType,key:str
 
         //Transaction type
         public enum ConfigTranType
@@ -54,25 +54,8 @@ namespace LockSolution
             TRANSACTION_TYPE_SHUT
         }
 
-
-        /// <summary>
-        ///   This smart contract is designed to implement NEP-5
-        ///   Parameter List: 0710
-        ///   Return List: 05
-        /// </summary>
-        /// <param name="operation">
-        ///     The methos being invoked.
-        /// </param>
-        /// <param name="args">
-        ///     Optional input parameters used by NEP5 methods.
-        /// </param>
-        /// <returns>
-        ///     Return Object
-        /// </returns>
-        public static Object Main(string operation, params object[] args)
+        public static object Main(string method, object[] args)
         {
-            var magicstr = "2019-05-06 18:40:10";
-
             if (Runtime.Trigger == TriggerType.Verification)
             {
                 return false;
@@ -81,307 +64,146 @@ namespace LockSolution
             {
                 var callscript = ExecutionEngine.CallingScriptHash;
 
-                if (operation == "openLock")
-                {
-                    if (args.Length != 3) return false;
-                    byte[] addr = (byte[])args[0];
-                    string ethAddr = (string)args[1];
-                    string asset = (string)args[2];
+                if (method == "openLock") return OpenLock((byte[])args[0], (string)args[1]);
 
-                    if (!Runtime.CheckWitness(addr)) return false;
-                    return openLock(addr, ethAddr,asset);
-                }
+                if (method == "getLockInfo") return GetLockInfo((byte[])args[0], (string)args[1]);
 
-                if (operation == "getLockInfo")
-                {
-                    if (args.Length != 2) return false;
-                    byte[] addr = (byte[])args[0];
-                    string lockType = (string)args[1];
+                if (method == "reserve") return Reserve((byte[])args[0], (string)args[1], (BigInteger)args[2]);
 
-                    byte[] lockInfo = getLockInfo(addr,lockType);
-                    if (lockInfo.Length == 0)
-                        return null;
-                    return Helper.Deserialize(lockInfo) as LockInfo;
-                }
+                if (method == "withdraw") return Withdraw((byte[])args[0], (string)args[1], (BigInteger)args[2]);
 
-                //locked nep5 asset to Lock account
-                if (operation == "reserve")
-                {
-                    if (args.Length != 3) return false;
-                    byte[] addr = (byte[])args[0];
-                    string lockType = (string)args[1];
-                    //NEP5 Asset mount 
-                    BigInteger mount = (BigInteger)args[2];
+                if (method == "close") return Close((byte[])args[0], (string)args[1]);
 
-                    if (!Runtime.CheckWitness(addr)) return false;
-                    return reserve(addr,lockType,mount);
-                }
-                //get asset from Lock
-                if (operation == "withdraw")
-                {
-                    if (args.Length != 3) return false;
+                if (method == "setLockAdd") return SetLockAdd((byte[])args[0], (string)args[1], (string)args[2]);
 
-                    byte[] addr = (byte[])args[0];
-                    string lockType = (string)args[1];
-                    //NEP5 asset
-                    BigInteger mount = (BigInteger)args[2];
+                if (method == "getLockAdd") return GetLockAdd((byte[])args[0], (string)args[1]);
+                //set account
+                if (method == "setAccount") return SetAccount((string)args[0], (byte[])args[1]);
 
-                    if (!Runtime.CheckWitness(addr)) return false;
+                if (method == "getAccount") return GetAccount((string)args[0]);
 
-                    return withdraw(addr,lockType,mount);
-                }
+                if (method == "setLockType") return SetLockType((string)args[0], (BigInteger)args[1]);
 
-                //close a lock
-                if (operation == "close")
-                {
-                    if (args.Length != 2) return false;
-                    byte[] addr = (byte[])args[0];
-                    string lockType = (string)args[1];
+                if (method == "getLockType") return GetLockType((string)args[0]);
 
-                    if (!Runtime.CheckWitness(addr)) return false;
-                    return close(addr,lockType);
-                }
-                if (operation == "getLockGlobal")
-                {
-                    return getLockGlobal();
-                }
-                if (operation == "setAccount")
-                {
-                    if (args.Length != 2) return false;
+                //set locktime
+                if (method == "setLockTime") return SetLockTime((string)args[0], (BigInteger)args[1]);
 
-                    string key = (string)args[0];
-                    byte[] address = (byte[])args[1];
-                    //only committee account
-                    if (!checkAdmin()) return false;
-                    return setAccount(key, address);
-                }
-                if (operation == "getAccount")
-                {
-                    if (args.Length != 1) return false;
+                if (method == "getLockTime") return GetLockTime((string)args[0]);
 
-                    string key = (string)args[0];
-                    return getAccount(key);
-                }
-                if (operation == "setLockTime")
-                {
-                    if (args.Length != 2) return false;
+                //get lock info
+                if (method == "getLockGlobal") return GetLockGlobal();
 
-                    string key = (string)args[0];
-                    BigInteger time = (BigInteger)args[1];
-                    //only committee account
-                    if (!checkAdmin()) return false;
-                    return setLockTime(key,time);
-                }
-                if (operation == "getLockTime")
-                {
-                    if (args.Length != 1) return false;
 
-                    string key = (string)args[0];
-                    return getLockTime(key);
-                }
             }
             return false;
         }
 
-
-        private static BigInteger getLockGlobal()
+        [DisplayName("openLock")]
+        public static bool OpenLock(byte[] addr, string asset)
         {
-            byte[] lockKey = getLockGlobalKey(LOCK_GLOBAL.AsByteArray());
-            BigInteger total = Storage.Get(Storage.CurrentContext, lockKey).AsBigInteger();
-            return total;
-        }
+            if (!Runtime.CheckWitness(addr)) return false;
 
-        private static bool checkAdmin()
-        {
-            byte[] currAdmin = Storage.Get(Storage.CurrentContext, getAccountKey(ADMIN_ACCOUNT.AsByteArray()));
-            if (currAdmin.Length > 0)
-            {
-
-                if (!Runtime.CheckWitness(currAdmin)) return false;
-            }
-            else
-            {
-                if (!Runtime.CheckWitness(committee)) return false;
-            }
-            return true;
-        }
-
-        private static bool openLock(byte[] addr, string ethAddr,string asset)
-        {
-            byte[] key01 = getLockKey(addr,LOCK_TYPE_01);
-            byte[] key02 = getLockKey(addr,LOCK_TYPE_02);
-            byte[] key03 = getLockKey(addr,LOCK_TYPE_03);
-            byte[] key04 = getLockKey(addr,LOCK_TYPE_04);
-
-            byte[] lockCurr01 = Storage.Get(Storage.CurrentContext, key01);
-            byte[] lockCurr02 = Storage.Get(Storage.CurrentContext, key02);
-            byte[] lockCurr03 = Storage.Get(Storage.CurrentContext, key03);
-            byte[] lockCurr04 = Storage.Get(Storage.CurrentContext, key04);
+            StorageMap lockInfo = Storage.CurrentContext.CreateMap(nameof(lockInfo));
+            byte[] lockCurr01 = lockInfo.Get(concatKey(addr, LOCK_TYPE_01));
+            byte[] lockCurr02 = lockInfo.Get(concatKey(addr, LOCK_TYPE_02));
+            byte[] lockCurr03 = lockInfo.Get(concatKey(addr, LOCK_TYPE_03));
+            byte[] lockCurr04 = lockInfo.Get(concatKey(addr, LOCK_TYPE_04));
 
             var txid = ((Transaction)ExecutionEngine.ScriptContainer).Hash;
-            if (lockCurr01.Length <= 0) {
+            if (lockCurr01.Length <= 0)
+            {
                 LockInfo info01 = new LockInfo();
-                info01.lockAddr = ethAddr;
                 info01.locked = 0;
                 info01.lockType = LOCK_TYPE_01;
                 info01.owner = addr;
                 info01.txid = txid;
-                info01.status = 1;
                 info01.asset = asset;
-                Storage.Put(Storage.CurrentContext, key01, Helper.Serialize(info01));
+                info01.lockTime = 0;
+                lockInfo.Put(concatKey(addr, LOCK_TYPE_01), Helper.Serialize(info01));
             }
             if (lockCurr02.Length <= 0)
             {
                 LockInfo info02 = new LockInfo();
-                info02.lockAddr = ethAddr;
                 info02.locked = 0;
                 info02.lockType = LOCK_TYPE_02;
                 info02.owner = addr;
                 info02.txid = txid;
-                info02.status = 1;
                 info02.asset = asset;
-                Storage.Put(Storage.CurrentContext, key02, Helper.Serialize(info02));
+                info02.lockTime = 0;
+                lockInfo.Put(concatKey(addr, LOCK_TYPE_02), Helper.Serialize(info02));
             }
             if (lockCurr03.Length <= 0)
             {
                 LockInfo info03 = new LockInfo();
-                info03.lockAddr = ethAddr;
                 info03.locked = 0;
                 info03.lockType = LOCK_TYPE_03;
                 info03.owner = addr;
                 info03.txid = txid;
-                info03.status = 1;
                 info03.asset = asset;
-                Storage.Put(Storage.CurrentContext, key03, Helper.Serialize(info03));
+                info03.lockTime = 0;
+                lockInfo.Put(concatKey(addr, LOCK_TYPE_03), Helper.Serialize(info03));
             }
             if (lockCurr04.Length <= 0)
             {
                 LockInfo info04 = new LockInfo();
-                info04.lockAddr = ethAddr;
                 info04.locked = 0;
                 info04.lockType = LOCK_TYPE_04;
                 info04.owner = addr;
                 info04.txid = txid;
-                info04.status = 1;
                 info04.asset = asset;
-                Storage.Put(Storage.CurrentContext, key04, Helper.Serialize(info04));
+                info04.lockTime = 0;
+                lockInfo.Put(concatKey(addr, LOCK_TYPE_04), Helper.Serialize(info04));
             }
             //notify
-            Operated(addr, LOCK_TYPE_01.AsByteArray(),(int)ConfigTranType.TRANSACTION_TYPE_OPEN, 0);
+            Locked(addr, LOCK_TYPE_01.AsByteArray(), (int)ConfigTranType.TRANSACTION_TYPE_OPEN, 0);
             return true;
         }
 
-        private static bool setAccount(string key, byte[] address)
+        [DisplayName("getLockInfo")]
+        public static LockInfo GetLockInfo(byte[] addr, string lockType)
         {
-            if (address.Length != 20)
-                throw new InvalidOperationException("The parameters address and to SHOULD be 20-byte addresses.");
+            if (addr.Length != 20)
+                throw new InvalidOperationException("The parameter addr SHOULD be 20-byte.");
 
-            Storage.Put(Storage.CurrentContext, getAccountKey(key.AsByteArray()), address);
-            return true;
+            if (lockType.Length <= 0)
+                throw new InvalidOperationException("The parameter lockType SHOULD be longer than 0.");
+
+            StorageMap lockInfo = Storage.CurrentContext.CreateMap(nameof(lockInfo));
+            var result = lockInfo.Get(concatKey(addr, lockType)); //0.1
+            if (result.Length == 0) return null;
+            return Helper.Deserialize(result) as LockInfo;
         }
 
-        private static byte[] getAccount(string key) {
-            return Storage.Get(Storage.CurrentContext,getAccountKey(key.AsByteArray()));
-        }
-
-        private static bool setLockTime(string type,BigInteger time)
+        [DisplayName("reserve")]
+        public static Boolean Reserve(byte[] addr, string lockType, BigInteger lockMount)
         {
-            if(time <= 0)
-                throw new InvalidOperationException("The parameters time SHOULD be larger than 0.");
-            Storage.Put(Storage.CurrentContext,getTimeKey(type),time);
-            return true;
-        }
+            if (!Runtime.CheckWitness(addr)) return false;
 
-        private static BigInteger getLockTime(string type)
-        {
-            return Storage.Get(Storage.CurrentContext, getTimeKey(type)).AsBigInteger();
-        }
-
-
-        private static byte[] getLockInfo(byte[] addr,string lockType)
-        {
-            byte[] key = getLockKey(addr,lockType);
-            return Storage.Get(Storage.CurrentContext, key);
-        }
-
-        private static Boolean withdraw(byte[] addr, string lockType, BigInteger mount)
-        {
             if (addr.Length != 20)
                 throw new InvalidOperationException("The parameter addr SHOULD be 20-byte addresses.");
 
-            if (mount <= 0)
-                throw new InvalidOperationException("The parameter mount MUST be greater than 0.");
-
-            var key = getLockKey(addr, lockType);
-            byte[] bytes = getLockInfo(addr, lockType);
-            if (bytes.Length == 0) throw new InvalidOperationException("The lockInfo can not be null.");
-
-            LockInfo lockInfo = Helper.Deserialize(bytes) as LockInfo;
-
-            string assetType = lockInfo.asset;
-            BigInteger currentLock = lockInfo.locked;
-            uint lockTime = lockInfo.lockTime;
-            if (currentLock <= 0)
-                throw new InvalidOperationException("The lockMount can be greater than 0.");
-
-            byte[] nep5AssetID = Storage.Get(Storage.CurrentContext, getAccountKey(assetType.AsByteArray()));
-
-            //Verify asset security
-            if (mount > currentLock)
-                throw new InvalidOperationException("The param is exception.");
-
-            //Verify unLock time
-            uint nowtime = Blockchain.GetHeader(Blockchain.GetHeight()).Timestamp;
-            BigInteger timeInterval = Storage.Get(Storage.CurrentContext,getTimeKey(lockType)).AsBigInteger();
-            if((nowtime-lockTime) < timeInterval)
-                throw new InvalidOperationException("The unlock time has not come yet.");
-
-            byte[] from = ExecutionEngine.ExecutingScriptHash;
-            if (from.Length == 0)
-                throw new InvalidOperationException("The param is exception.");
-            {
-                object[] arg = new object[3];
-                arg[0] = from;
-                arg[1] = addr;
-                arg[2] = mount;
-                var nep5Contract = (NEP5Contract)nep5AssetID.ToDelegate();
-
-                if (!(bool)nep5Contract("transfer_contract", arg)) throw new InvalidOperationException("The operation is error.");
-            }
-            lockInfo.locked = currentLock - mount;
-            Storage.Put(Storage.CurrentContext, key, Helper.Serialize(lockInfo));
-
-            var globalKey = getLockGlobalKey(LOCK_GLOBAL.AsByteArray());
-            BigInteger currentTotal = Storage.Get(Storage.CurrentContext, globalKey).AsBigInteger();
-            if (currentTotal - mount >= 0)
-            {
-                Storage.Put(Storage.CurrentContext, globalKey, currentTotal - mount);
-            }
-            //notify
-            Operated(addr,lockType.AsByteArray(),(int)ConfigTranType.TRANSACTION_TYPE_WITHDRAW, mount);
-            return true;
-        }
-
-        private static Boolean reserve(byte[] addr,string lockType,BigInteger lockMount)
-        {
-            if (addr.Length != 20)
-                throw new InvalidOperationException("The parameter addr SHOULD be 20-byte addresses.");
+            if (lockType.Length <= 0)
+                throw new InvalidOperationException("The parameter lockType SHOULD be longer than 0.");
 
             if (lockMount <= 0)
                 throw new InvalidOperationException("The parameter lockMount MUST be greater than 0.");
 
-            var key = getLockKey(addr,lockType);
-            byte[] bytes = getLockInfo(addr, lockType);
-            if (bytes.Length == 0) throw new InvalidOperationException("The lockInfo can not be null.");
+            StorageMap lockInfo = Storage.CurrentContext.CreateMap(nameof(lockInfo));
+            var result = lockInfo.Get(concatKey(addr, lockType));
 
-            LockInfo lockInfo = Helper.Deserialize(bytes) as LockInfo;
+            if (result.Length == 0)
+                throw new InvalidOperationException("The lockInfo can not be null.");
 
-            string assetType = lockInfo.asset;
-            BigInteger currentLock = lockInfo.locked;
+            LockInfo info = Helper.Deserialize(result) as LockInfo;
+
+            string assetType = info.asset;
+            BigInteger currentLock = info.locked;
             if (currentLock > 0)
                 throw new InvalidOperationException("The lock has completed.");
 
-            byte[] nep5AssetID = Storage.Get(Storage.CurrentContext, getAccountKey(assetType.AsByteArray()));
+            StorageMap account = Storage.CurrentContext.CreateMap(nameof(account));
+            byte[] nep5AssetID = account.Get(assetType);
             //current contract
             byte[] to = ExecutionEngine.ExecutingScriptHash;
             if (to.Length == 0)
@@ -400,41 +222,265 @@ namespace LockSolution
             //锁仓高度，锁仓时间，锁仓额度
             var lockHeight = Blockchain.GetHeight();
             var nowtime = Blockchain.GetHeader(lockHeight).Timestamp;
-            lockInfo.locked = lockMount;
-            lockInfo.lockHeight = lockHeight;
-            lockInfo.lockTime = nowtime;
+            info.locked = lockMount;
+            info.lockHeight = lockHeight;
+            info.lockTime = nowtime;
 
-            Storage.Put(Storage.CurrentContext, key, Helper.Serialize(lockInfo));
+            //更新信息
+            lockInfo.Put(concatKey(addr, lockType), Helper.Serialize(info));
 
-            var globalKey = getLockGlobalKey(LOCK_GLOBAL.AsByteArray());
-            BigInteger currentTotal = Storage.Get(Storage.CurrentContext, globalKey).AsBigInteger();
-            Storage.Put(Storage.CurrentContext,globalKey,currentTotal+lockMount);
+            StorageMap global = Storage.CurrentContext.CreateMap(nameof(global));
+            BigInteger currentTotal = global.Get(LOCK_GLOBAL).AsBigInteger();
+            global.Put(LOCK_GLOBAL, currentTotal + lockMount);
 
             //notify
-            Operated(addr, lockType.AsByteArray(),(int)ConfigTranType.TRANSACTION_TYPE_LOCK, lockMount);
+            Locked(addr, lockType.AsByteArray(), (int)ConfigTranType.TRANSACTION_TYPE_LOCK, lockMount);
             return true;
         }
 
-        private static Boolean close(byte[] addr, string lockType)
+        [DisplayName("withdraw")]
+        public static Boolean Withdraw(byte[] addr, string lockType, BigInteger mount)
         {
+            if (!Runtime.CheckWitness(addr)) return false;
+
             if (addr.Length != 20)
                 throw new InvalidOperationException("The parameter addr SHOULD be 20-byte addresses.");
 
-            var key = getLockKey(addr, lockType);
-            byte[] bytes = getLockInfo(addr, lockType);
-            if (bytes.Length == 0) throw new InvalidOperationException("The lockInfo can not be null.");
+            if (lockType.Length <= 0)
+                throw new InvalidOperationException("The parameter lockType SHOULD be longer than 0.");
 
-            LockInfo lockInfo = Helper.Deserialize(bytes) as LockInfo;
+            if (mount <= 0)
+                throw new InvalidOperationException("The parameter mount MUST be greater than 0.");
 
-            string assetType = lockInfo.asset;
-            BigInteger currentLock = lockInfo.locked;
+            StorageMap lockInfo = Storage.CurrentContext.CreateMap(nameof(lockInfo));
+            var result = lockInfo.Get(concatKey(addr, lockType));
+
+            if (result.Length == 0)
+                throw new InvalidOperationException("The lockInfo can not be null.");
+
+            LockInfo info = Helper.Deserialize(result) as LockInfo;
+
+            string assetType = info.asset;
+            BigInteger currentLock = info.locked;
+            uint lockTime = info.lockTime;
+            if (currentLock <= 0)
+                throw new InvalidOperationException("The lockMount can be greater than 0.");
+
+            //Verify asset security
+            if (mount > currentLock)
+                throw new InvalidOperationException("The param is exception.");
+
+            //Verify unLock time
+            uint nowtime = Blockchain.GetHeader(Blockchain.GetHeight()).Timestamp;
+            StorageMap time = Storage.CurrentContext.CreateMap(nameof(time));
+            BigInteger timeInterval = time.Get(lockType).AsBigInteger();
+            if ((nowtime - lockTime) < timeInterval)
+                throw new InvalidOperationException("The unlock time has not come yet.");
+
+            StorageMap account = Storage.CurrentContext.CreateMap(nameof(account));
+            byte[] nep5AssetID = account.Get(assetType);
+
+            byte[] from = ExecutionEngine.ExecutingScriptHash;
+            if (from.Length == 0)
+                throw new InvalidOperationException("The param is exception.");
+            {
+                object[] arg = new object[3];
+                arg[0] = from;
+                arg[1] = addr;
+                arg[2] = mount;
+                var nep5Contract = (NEP5Contract)nep5AssetID.ToDelegate();
+
+                if (!(bool)nep5Contract("transfer_contract", arg)) throw new InvalidOperationException("The operation is error.");
+            }
+            info.locked = currentLock - mount;
+
+            //更新信息
+            lockInfo.Put(concatKey(addr, lockType), Helper.Serialize(info));
+
+            StorageMap global = Storage.CurrentContext.CreateMap(nameof(global));
+            BigInteger currentTotal = global.Get(LOCK_GLOBAL).AsBigInteger();
+            if (currentTotal - mount >= 0)
+            {
+                global.Put(LOCK_GLOBAL, currentTotal - mount);
+            }
+            //notify
+            Locked(addr, lockType.AsByteArray(), (int)ConfigTranType.TRANSACTION_TYPE_WITHDRAW, mount);
+            return true;
+        }
+
+        [DisplayName("close")]
+        public static Boolean Close(byte[] addr, string lockType)
+        {
+            if (!Runtime.CheckWitness(addr)) return false;
+
+            if (addr.Length != 20)
+                throw new InvalidOperationException("The parameter addr SHOULD be 20-byte addresses.");
+
+            if (lockType.Length <= 0)
+                throw new InvalidOperationException("The parameter lockType SHOULD be longer than 0.");
+
+            StorageMap lockInfo = Storage.CurrentContext.CreateMap(nameof(lockInfo));
+            var result = lockInfo.Get(concatKey(addr, lockType));
+
+            if (result.Length == 0)
+                throw new InvalidOperationException("The lockInfo can not be null.");
+
+            LockInfo info = Helper.Deserialize(result) as LockInfo;
+
+            BigInteger currentLock = info.locked;
             if (currentLock > 0)
                 throw new InvalidOperationException("The lockMount is not 0.");
 
-            Storage.Delete(Storage.CurrentContext, key);
+            lockInfo.Delete(concatKey(addr, lockType));
+
             //notify
-            Operated(addr, lockType.AsByteArray(), (int)ConfigTranType.TRANSACTION_TYPE_SHUT, 0);
+            Locked(addr, lockType.AsByteArray(), (int)ConfigTranType.TRANSACTION_TYPE_SHUT, 0);
             return true;
+        }
+
+        [DisplayName("setAccount")]
+        public static bool SetAccount(string key, byte[] address)
+        {
+            if (key.Length <= 0)
+                throw new InvalidOperationException("The parameter key SHOULD be longer than 0.");
+
+            if (address.Length != 20)
+                throw new InvalidOperationException("The parameters address and to SHOULD be 20-byte addresses.");
+
+            if (!checkAdmin()) return false;
+
+            StorageMap account = Storage.CurrentContext.CreateMap(nameof(account));
+            account.Put(key, address);
+            return true;
+        }
+
+        [DisplayName("setLockType")]
+        public static bool SetLockType(string key, BigInteger auth)
+        {
+            if (key.Length <= 0)
+                throw new InvalidOperationException("The parameter key SHOULD be longer than 0.");
+
+            if (!checkAdmin()) return false;
+            StorageMap lockType = Storage.CurrentContext.CreateMap(nameof(lockType));
+            if (auth > 0)
+            {
+                lockType.Put(key, auth);
+            }
+            else
+            {
+                lockType.Delete(key);
+            }
+            return true;
+        }
+
+        [DisplayName("getLockType")]
+        public static BigInteger GetLockType(string key)
+        {
+            if (key.Length <= 0)
+                throw new InvalidOperationException("The parameter key SHOULD be longer than 0.");
+
+            StorageMap lockType = Storage.CurrentContext.CreateMap(nameof(lockType));
+            return lockType.Get(key).AsBigInteger();
+        }
+
+
+        private static bool checkAdmin()
+        {
+            StorageMap account = Storage.CurrentContext.CreateMap(nameof(account));
+            byte[] currAdmin = account.Get(ADMIN_ACCOUNT);
+
+            if (currAdmin.Length > 0)
+            {
+
+                if (!Runtime.CheckWitness(currAdmin)) return false;
+            }
+            else
+            {
+                if (!Runtime.CheckWitness(committee)) return false;
+            }
+            return true;
+        }
+
+        [DisplayName("setLockAdd")]
+        public static bool SetLockAdd(byte[] addr, string addType, string lockAddr)
+        {
+            if (addType.Length <= 0)
+                throw new InvalidOperationException("The parameter addType SHOULD be longer than 0.");
+
+            if (lockAddr.Length <= 0)
+                throw new InvalidOperationException("The parameter lockAddr SHOULD be longer than 0.");
+
+            if (addr.Length != 20)
+                throw new InvalidOperationException("The parameters address and to SHOULD be 20-byte addresses.");
+
+            if (!Runtime.CheckWitness(addr)) return false;
+
+            //资产类型是否注册
+            StorageMap lockType = Storage.CurrentContext.CreateMap(nameof(lockType));
+            BigInteger auth = lockType.Get(addType).AsBigInteger();
+            if (auth <= 0)
+                throw new InvalidOperationException("The parameters addType is not auth.");
+
+            StorageMap addrConfig = Storage.CurrentContext.CreateMap(nameof(addrConfig));
+            addrConfig.Put(concatKey(addr, addType), lockAddr);
+
+            LockedAddr(addr, addType.AsByteArray(), lockAddr.AsByteArray());
+            return true;
+        }
+
+        [DisplayName("getLockAdd")]
+        public static string GetLockAdd(byte[] addr, string addType)
+        {
+            if (addType.Length <= 0)
+                throw new InvalidOperationException("The parameter addType SHOULD be longer than 0.");
+
+            if (addr.Length != 20)
+                throw new InvalidOperationException("The parameters address and to SHOULD be 20-byte addresses.");
+
+            StorageMap addrConfig = Storage.CurrentContext.CreateMap(nameof(addrConfig));
+            return addrConfig.Get(concatKey(addr, addType)).AsString();
+        }
+
+
+        [DisplayName("setLockTime")]
+        public static bool SetLockTime(string type, BigInteger timeLimit)
+        {
+            if (type.Length <= 0)
+                throw new InvalidOperationException("The parameter type SHOULD be longer than 0.");
+
+            if (timeLimit <= 0)
+                throw new InvalidOperationException("The parameters timeLimit SHOULD be larger than 0.");
+
+            if (!checkAdmin()) return false;
+            StorageMap time = Storage.CurrentContext.CreateMap(nameof(time));
+            time.Put(type, timeLimit);
+            return true;
+        }
+
+        [DisplayName("getLockGlobal")]
+        public static BigInteger GetLockGlobal()
+        {
+            StorageMap global = Storage.CurrentContext.CreateMap(nameof(global));
+            return global.Get(LOCK_GLOBAL).AsBigInteger();
+        }
+
+        [DisplayName("getLockTime")]
+        public static BigInteger GetLockTime(string type)
+        {
+            StorageMap time = Storage.CurrentContext.CreateMap(nameof(time));
+            return time.Get(type).AsBigInteger();
+        }
+
+        [DisplayName("getAccount")]
+        public static byte[] GetAccount(string key)
+        {
+            StorageMap account = Storage.CurrentContext.CreateMap(nameof(account));
+            return account.Get(key);
+        }
+
+        private static byte[] concatKey(byte[] addr, string type)
+        {
+            return addr.Concat(type.AsByteArray());
         }
 
         public class LockInfo
@@ -442,8 +488,6 @@ namespace LockSolution
 
             //creator
             public byte[] owner;
-            //lockAddr,such as eth address
-            public string lockAddr;
 
             //key of this lock
             public byte[] txid;
@@ -453,9 +497,6 @@ namespace LockSolution
 
             //type of collateral 
             public string lockType;
-
-            //1safe  2unsafe 3lock   
-            public int status;
 
             //lockTime 
             public uint lockTime;
