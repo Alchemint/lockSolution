@@ -94,7 +94,6 @@ namespace LOCK
                 //get lock info
                 if (method == "getLockGlobal") return GetLockGlobal();
 
-
             }
             return false;
         }
@@ -121,6 +120,8 @@ namespace LOCK
                 info01.asset = asset;
                 info01.lockTime = 0;
                 lockInfo.Put(concatKey(addr, LOCK_TYPE_01), Helper.Serialize(info01));
+                //notify
+                Locked(addr, LOCK_TYPE_01.AsByteArray(), (int)ConfigTranType.TRANSACTION_TYPE_OPEN, 0);
             }
             if (lockCurr02.Length <= 0)
             {
@@ -132,6 +133,8 @@ namespace LOCK
                 info02.asset = asset;
                 info02.lockTime = 0;
                 lockInfo.Put(concatKey(addr, LOCK_TYPE_02), Helper.Serialize(info02));
+                Locked(addr, LOCK_TYPE_02.AsByteArray(), (int)ConfigTranType.TRANSACTION_TYPE_OPEN, 0);
+
             }
             if (lockCurr03.Length <= 0)
             {
@@ -143,6 +146,7 @@ namespace LOCK
                 info03.asset = asset;
                 info03.lockTime = 0;
                 lockInfo.Put(concatKey(addr, LOCK_TYPE_03), Helper.Serialize(info03));
+                Locked(addr, LOCK_TYPE_03.AsByteArray(), (int)ConfigTranType.TRANSACTION_TYPE_OPEN, 0);
             }
             if (lockCurr04.Length <= 0)
             {
@@ -154,9 +158,8 @@ namespace LOCK
                 info04.asset = asset;
                 info04.lockTime = 0;
                 lockInfo.Put(concatKey(addr, LOCK_TYPE_04), Helper.Serialize(info04));
+                Locked(addr, LOCK_TYPE_04.AsByteArray(), (int)ConfigTranType.TRANSACTION_TYPE_OPEN, 0);
             }
-            //notify
-            Locked(addr, LOCK_TYPE_01.AsByteArray(), (int)ConfigTranType.TRANSACTION_TYPE_OPEN, 0);
             return true;
         }
 
